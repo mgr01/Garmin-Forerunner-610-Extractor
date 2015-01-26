@@ -41,22 +41,21 @@ import scripting
 
 _logger = logging.getLogger()
 
-_directories = {
-    ".": File.Identifier.DEVICE,
-    "activities": File.Identifier.ACTIVITY,
-    "courses": File.Identifier.COURSE,
-    "monitoring_b": File.Identifier.MONITORING_B,
-    # "profile":     File.Identifier.?
-    # "goals?":      File.Identifier.GOALS,
-    # "bloodprs":    File.Identifier.BLOOD_PRESSURE,
-    # "summaries":   File.Identifier.ACTIVITY_SUMMARY,
-    "settings": File.Identifier.SETTING,
-    "sports": File.Identifier.SPORT,
-    "totals": File.Identifier.TOTALS,
-    "weight": File.Identifier.WEIGHT,
-    "workouts": File.Identifier.WORKOUT}
-
-_filetypes = dict((v, k) for (k, v) in _directories.items())
+# filetype -> (directory, is_writable, is_erasable)
+_filetypes = {
+    File.Identifier.DEVICE: (".", False, False),
+    File.Identifier.ACTIVITY: ("activities", False, True),
+    File.Identifier.COURSE: ("courses", True, True),
+    File.Identifier.MONITORING_B: ("monitoring_b", False, False),
+    # File.Identifier.GOALS: ("goals", True, False),
+    # File.Identifier.BLOOD_PRESSURE: ("bloodprs", False, False),
+    # File.Identifier.ACTIVITY_SUMMARY: ("summaries", False, True),
+    File.Identifier.SETTING: ("settings", True, False),
+    File.Identifier.SPORT: ("sports", True, False),
+    File.Identifier.TOTALS: ("totals", False, False),
+    File.Identifier.WEIGHT: ("weight", False, False),
+    File.Identifier.WORKOUT: ("workouts", True, True),
+    }
 
 
 class Device:
@@ -80,7 +79,7 @@ class Device:
 
         # Create directories
         utilities.makedirs_if_not_exists(self._path)
-        for directory in _directories:
+        for directory, _, _ in _filetypes.values():
             directory_path = os.path.join(self._path, directory)
             utilities.makedirs_if_not_exists(directory_path)
 
@@ -195,11 +194,11 @@ class AntFSCLI(Application):
 
         # Map local filenames to FIT file types
         local_files = []
-        for folder, filetype in _directories.items():
+        for filetype, (folder, is_writable, _) in _filetypes.items():
             path = os.path.join(self._device.get_path(), folder)
             for filename in os.listdir(path):
                 if os.path.splitext(filename)[1].lower() == ".fit":
-                    local_files.append((filename, filetype))
+                    local_files.append((filename, filetype, is_writable))
 
         # Map remote filenames to FIT file objects
         remote_files = []
@@ -208,14 +207,14 @@ class AntFSCLI(Application):
                 remote_files.append((self.get_filename(fil), fil))
 
         # Calculate remote and local file diff
-        local_names = set(name for (name, filetype) in local_files)
-        remote_names = set(name for (name, fil) in remote_files)
+        local_names = set(name for name, _, _ in local_files)
+        remote_names = set(name for name, _ in remote_files)
         downloading = [fil
                        for name, fil in remote_files
                        if name not in local_names or not fil.is_archived()]
         uploading = [(name, filetype)
-                     for name, filetype in local_files
-                     if name not in remote_names]
+                     for name, filetype, is_writable in local_files
+                     if is_writable and name not in remote_names]
 
         # Remove archived files from the list
         if self._skip_archived:
@@ -245,7 +244,7 @@ class AntFSCLI(Application):
                 try:
                     file_object = next(f for f in directory.get_files()
                                        if f.get_index() == index)
-                    src = os.path.join(self._device.get_path(), _filetypes[typ], filename)
+                    src = os.path.join(self._device.get_path(), _filetypes[typ][0], filename)
                     dst = self.get_filepath(file_object)
                     print(" - Renamed", src, "to", dst)
                     os.rename(src, dst)
@@ -260,7 +259,7 @@ class AntFSCLI(Application):
 
     def get_filepath(self, fil):
         return os.path.join(self._device.get_path(),
-                            _filetypes[fil.get_fit_sub_type()],
+                            _filetypes[fil.get_fit_sub_type()][0],
                             self.get_filename(fil))
 
     def download_file(self, fil):
@@ -277,7 +276,7 @@ class AntFSCLI(Application):
     def upload_file(self, typ, filename):
         sys.stdout.write("Uploading {0}: ".format(filename))
         sys.stdout.flush()
-        with open(os.path.join(self._device.get_path(), _filetypes[typ],
+        with open(os.path.join(self._device.get_path(), _filetypes[typ][0],
                                filename), 'rb') as fd:
             data = array.array('B', fd.read())
         index = self.create(typ, data, AntFSCLI._get_progress_callback())
